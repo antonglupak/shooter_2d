@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>2D Шутер</title>
+  <style>
+    body { margin: 0; overflow: hidden; font-family: sans-serif; }
+    canvas { display: block; background: #000; }
+    #ui {
+      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column; background: rgba(0,0,0,0.7);
+      color: white; font-size: 24px;
+    }
+    #hud {
+      position: absolute; top: 10px; left: 10px;
+      color: white; font-size: 18px; z-index: 10;
+    }
+    button {
+      margin: 10px; font-size: 20px; padding: 10px 20px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
+  <div id="hud">
+    Убийства: <span id="kills">0</span><br>
+    Суперспособность: <span id="cooldown">готова</span>
+  </div>
+  <div id="ui">
+    <div id="menu">
+      <h1>2D Шутер</h1>
+      <p>Выберите уровень сложности:</p>
+      <button onclick="startGame('easy')">Лёгкий</button>
+      <button onclick="startGame('medium')">Средний</button>
+      <button onclick="startGame('hard')">Сложный</button>
+    </div>
+    <div id="gameOver" style="display:none;">
+      <h1>Вы проиграли</h1>
+      <button onclick="restartGame()">Заново</button>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    const ui = document.getElementById('ui');
+    const menu = document.getElementById('menu');
+    const gameOverScreen = document.getElementById('gameOver');
+    const killsCounter = document.getElementById('kills');
+    const cooldownText = document.getElementById('cooldown');
+
+    let keys = {}, bullets = [], enemies = [];
+    let isGameOver = false, gameStarted = false;
+    let backgroundColor = "#111";
+    let enemySpeedRange = [1, 2];
+    let kills = 0;
+
+    const player = { x: 400, y: 300, radius: 20, speed: 4 };
+
+    let canUseFreeze = true;
+    let isFreezeActive = false;
+    let freezeCooldown = 10000;
+    let freezeDuration = 2000;
+    let lastFreezeTime = 0;
+
+    function setDifficulty(level) {
+      if (level === 'easy') {
+        backgroundColor = '#cceeff';
+        enemySpeedRange = [0.5, 1.2];
+      } else if (level === 'medium') {
+        backgroundColor = '#b0ffb0';
+        enemySpeedRange = [1.5, 2.5];
+      } else if (level === 'hard') {
+        backgroundColor = '#440000';
+        enemySpeedRange = [2.5, 4];
+      }
+    }
+
+    function startGame(difficulty) {
+      setDifficulty(difficulty);
+      ui.style.display = 'none';
+      gameStarted = true;
+      kills = 0;
+      killsCounter.textContent = kills;
+      init();
+    }
+
+    function restartGame() {
+      ui.style.display = 'none';
+      gameOverScreen.style.display = 'none';
+      isGameOver = false;
+      bullets = [];
+      enemies = [];
+      player.x = 400;
+      player.y = 300;
+      kills = 0;
+      killsCounter.textContent = kills;
+      canUseFreeze = true;
+      cooldownText.textContent = 'готова';
+      init();
+    }
+
+    function init() {
+      spawnEnemy();
+      requestAnimationFrame(update);
+    }
+
+    function spawnEnemy() {
+      const enemy = {
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        radius: 15,
+        speed: enemySpeedRange[0] + Math.random() * (enemySpeedRange[1] - enemySpeedRange[0]),
+        frozen: false
+      };
+      enemies.push(enemy);
+      if (!isGameOver) setTimeout(spawnEnemy, 2000);
+    }
+
+    function update() {
+      if (isGameOver) return;
+
+      // Перемещение
+      if (keys['w']) player.y -= player.speed;
+      if (keys['s']) player.y += player.speed;
+      if (keys['a']) player.x -= player.speed;
+      if (keys['d']) player.x += player.speed;
+
+      // Границы экрана
+      player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
+      player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
+
+      // Суперспособность: заморозка
+      if (keys[' '] && canUseFreeze) {
+        activateFreeze();
+      }
+
+      if (isFreezeActive && performance.now() - lastFreezeTime > freezeDuration) {
+        isFreezeActive = false;
+        enemies.forEach(e => e.frozen = false);
+      }
+
+      if (!canUseFreeze) {
+        const remaining = Math.ceil((freezeCooldown - (performance.now() - lastFreezeTime)) / 1000);
+        cooldownText.textContent = remaining > 0 ? `${remaining} сек.` : 'готова';
+        if (performance.now() - lastFreezeTime >= freezeCooldown) {
+          canUseFreeze = true;
+        }
+      }
+
+      // Пули
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        const b = bullets[i];
+        b.x += b.dx * 8;
+        b.y += b.dy * 8;
+        if (b.x < 0 || b.y < 0 || b.x > canvas.width || b.y > canvas.height) {
+          bullets.splice(i, 1);
+        }
+      }
+
+      // Враги
+      for (const e of enemies) {
+        if (e.frozen) continue;
+        const dx = player.x - e.x;
+        const dy = player.y - e.y;
+        const dist = Math.hypot(dx, dy);
+        e.x += (dx / dist) * e.speed;
+        e.y += (dy / dist) * e.speed;
+      }
+
+      // Столкновения пуль и врагов
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        for (let j = bullets.length - 1; j >= 0; j--) {
+          const e = enemies[i], b = bullets[j];
+          const dist = Math.hypot(e.x - b.x, e.y - b.y);
+          if (dist < e.radius + 5) {
+            enemies.splice(i, 1);
+            bullets.splice(j, 1);
+            kills++;
+            killsCounter.textContent = kills;
+            break;
+          }
+        }
+      }
+
+      // Столкновение с игроком
+      for (const e of enemies) {
+        const dist = Math.hypot(player.x - e.x, player.y - e.y);
+        if (dist < player.radius + e.radius) {
+          endGame();
+          return;
+        }
+      }
+
+      draw();
+      requestAnimationFrame(update);
+    }
+
+    function draw() {
+      ctx.fillStyle = backgroundColor;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Игрок
+      ctx.fillStyle = 'cyan';
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Пули
+      ctx.fillStyle = 'yellow';
+      for (const b of bullets) {
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Враги
+      for (const e of enemies) {
+        ctx.fillStyle = e.frozen ? 'lightblue' : 'red';
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function activateFreeze() {
+      canUseFreeze = false;
+      isFreezeActive = true;
+      lastFreezeTime = performance.now();
+      enemies.forEach(e => e.frozen = true);
+      cooldownText.textContent = '10 сек.';
+    }
+
+    function endGame() {
+      isGameOver = true;
+      ui.style.display = 'flex';
+      menu.style.display = 'none';
+      gameOverScreen.style.display = 'block';
+    }
+
+    // Управление
+    window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+    window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+    canvas.addEventListener('mousedown', e => {
+      if (!gameStarted || isGameOver) return;
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const dx = mx - player.x;
+      const dy = my - player.y;
+      const len = Math.hypot(dx, dy);
+      bullets.push({ x: player.x, y: player.y, dx: dx / len, dy: dy / len });
+    });
+  </script>
+</body>
+</html>
